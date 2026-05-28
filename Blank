@@ -1,0 +1,102 @@
+import streamlit as st
+import pandas as pd
+from datetime import datetime
+
+# Load the template
+TEMPLATE_PATH = "Timesheet Template 2025 REV (3).xlsx - BLANK.csv"
+
+def generate_timesheet(user_data, jobs_data):
+    df = pd.read_csv(TEMPLATE_PATH, header=None)
+    
+    # 1. Fill Header Information
+    df.iloc = user_data['emp_id']      # Employee #
+    df.iloc = user_data['emp_name']    # Employee Name
+    df.iloc = user_data['week_ending'] # Week Ending
+    df.iloc = user_data['odometer']   # Odometer
+    df.iloc = user_data['miles']      # Miles
+
+    # Column mapping for days
+    # Wed=4, Thu=8, Fri=12, Sat=16, Sun=17, Mon=18, Tue=22
+    days = {
+        "Wed": {"arr": 4, "reg": 4, "ot": 6},
+        "Thu": {"arr": 8, "reg": 8, "ot": 10},
+        "Fri": {"arr": 12, "reg": 12, "ot": 14},
+        "Sat": {"arr": 16, "reg": 16, "ot": 16}, # Sat/Sun usually OT
+        "Sun": {"arr": 17, "reg": 17, "ot": 17},
+        "Mon": {"arr": 18, "reg": 18, "ot": 20},
+        "Tue": {"arr": 22, "reg": 22, "ot": 24}
+    }
+
+    # 2. Fill Daily Arrive/End Times
+    for day, info in days.items():
+        df.iloc[9, info['arr']] = user_data[f'{day}_arrive']
+        df.iloc[10, info['arr']] = user_data[f'{day}_end']
+
+    # 3. Fill Job Information (Starting Row 11, skipping every 3 rows for Start/End times)
+    row_idx = 11
+    for job in jobs_data:
+        df.iloc[row_idx, 0] = job['job_num']
+        df.iloc[row_idx, 1] = job['job_name']
+        
+        for day, hours in job['daily_hours'].items():
+            reg_col = days[day]['reg']
+            ot_col = days[day]['ot']
+            df.iloc[row_idx, reg_col] = hours['reg']
+            df.iloc[row_idx, ot_col] = hours['ot']
+        row_idx += 3 
+
+    return df
+
+# --- STREAMLIT UI ---
+st.set_page_config(page_title="Comroe Timesheet Portal", layout="wide")
+st.title("📋 Employee Timesheet Input")
+
+with st.form("timesheet_form"):
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        emp_name = st.text_input("Employee Name")
+        emp_id = st.text_input("Employee ID #")
+    with col2:
+        week_ending = st.date_input("Week Ending Date")
+        odometer = st.number_input("Odometer Reading", step=1)
+    with col3:
+        miles = st.number_input("Total Miles", step=1)
+
+    st.divider()
+    st.subheader("Daily Arrival & Departure")
+    day_list = ["Wed", "Thu", "Fri", "Sat", "Sun", "Mon", "Tue"]
+    daily_times = {}
+    cols = st.columns(7)
+    for i, day in enumerate(day_list):
+        with cols[i]:
+            daily_times[f'{day}_arrive'] = st.text_input(f"{day} Arrive", value="06:00")
+            daily_times[f'{day}_end'] = st.text_input(f"{day} End", value="14:30")
+
+    st.divider()
+    st.subheader("Job Entries")
+    # Simplified for 1 Job entry in this example; can be looped for more
+    job_num = st.text_input("Job #")
+    job_name = st.text_input("Job Name")
+    
+    st.write("Enter Hours (Auto-split Reg/OT: Any single day > 8hrs = OT)")
+    job_hours = {}
+    h_cols = st.columns(7)
+    for i, day in enumerate(day_list):
+        with h_cols[i]:
+            total = st.number_input(f"{day} Hrs", min_value=0.0, step=0.5)
+            reg = min(8.0, total) if day not in ["Sat", "Sun"] else 0
+            ot = (total - reg) if day not in ["Sat", "Sun"] else total
+            job_hours[day] = {"reg": reg, "ot": ot}
+
+    submit = st.form_submit_button("Generate Filled Timesheet")
+
+if submit:
+    user_info = {**daily_times, "emp_name": emp_name, "emp_id": emp_id, 
+                 "week_ending": week_ending, "odometer": odometer, "miles": miles}
+    job_entry = [{"job_num": job_num, "job_name": job_name, "daily_hours": job_hours}]
+    
+    result_df = generate_timesheet(user_info, job_entry)
+    csv = result_df.to_csv(index=False, header=False).encode('utf-8')
+    
+    st.success("Timesheet Generated Successfully!")
+    st.download_button("📥 Download Filled CSV", csv, f"Timesheet_{emp_name}_{week_ending}.csv", "text/csv")
